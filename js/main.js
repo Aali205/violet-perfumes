@@ -1,4 +1,4 @@
-import { BRANDS, PRODUCTS, ACCORDS, I18N, STORE, imgPath } from './data.js';
+import { BRANDS, PRODUCTS, ACCORDS, I18N, STORE, imgPath } from './data.js?v=8';
 
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];

@@ -14,7 +14,9 @@ try {
   hero.classList.add('no-webgl');
   throw e;
 }
-renderer.setPixelRatio(Math.min(devicePixelRatio, small ? 1.5 : 1.75));
+renderer.setPixelRatio(Math.min(devicePixelRatio, small ? 1.25 : 1.5));
+// The glass refraction pass is the costliest part of the scene; render it at reduced resolution.
+renderer.transmissionResolutionScale = small ? 0.5 : 0.75;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.05;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -101,7 +103,6 @@ function violetBottle() {
   cap.rotation.y = Math.PI / 8; cap.scale.z = 0.62; cap.position.y = 1.5; g.add(cap);
   const capTop = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.5, 0.06, 8), gold);
   capTop.rotation.y = Math.PI / 8; capTop.scale.z = 0.62; capTop.position.y = 1.74; g.add(capTop);
-  g.userData.nozzle = new THREE.Vector3(0, 1.22, 0.25);
   return g;
 }
 
@@ -122,7 +123,6 @@ function roundBottle() {
   disc.rotation.x = -Math.PI / 2; disc.position.y = 0.36; g.add(disc);
   const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.22, 0.18, 32), gold); neck.position.y = 1.14; g.add(neck);
   const ball = new THREE.Mesh(new THREE.SphereGeometry(0.34, 48, 32), gold); ball.position.y = 1.5; ball.scale.y = 0.9; g.add(ball);
-  g.userData.nozzle = new THREE.Vector3(0, 1.16, 0.2);
   return g;
 }
 
@@ -138,15 +138,14 @@ function tallBottle() {
   label.position.set(0, 0.25, 0.44); g.add(label);
   const ring = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.24, 0.12, 32), gold); ring.position.y = 1.22; g.add(ring);
   const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.34, 0.62, 48), lacquer('#101018')); cap.position.y = 1.6; g.add(cap);
-  g.userData.nozzle = new THREE.Vector3(0, 1.24, 0.24);
   return g;
 }
 
 const stage = new THREE.Group(); scene.add(stage);
 const bottles = [
-  { mesh: violetBottle(), home: new THREE.Vector3(0, 0.05, 0.6), scale: 1.12, dir: new THREE.Vector3(0.55, 0.75, 0.7), color: 0 },
-  { mesh: roundBottle(), home: new THREE.Vector3(-2.4, -0.55, -0.4), scale: 0.95, dir: new THREE.Vector3(-0.35, 0.9, 0.6), color: 1 },
-  { mesh: tallBottle(), home: new THREE.Vector3(2.2, -0.2, -0.9), scale: 0.95, dir: new THREE.Vector3(0.75, 0.55, 0.6), color: 2 },
+  { mesh: violetBottle(), home: new THREE.Vector3(0, 0.05, 0.6), scale: 1.12 },
+  { mesh: roundBottle(), home: new THREE.Vector3(-2.4, -0.55, -0.4), scale: 0.95 },
+  { mesh: tallBottle(), home: new THREE.Vector3(2.2, -0.2, -0.9), scale: 0.95 },
 ];
 bottles.forEach((b, i) => {
   b.mesh.scale.setScalar(b.scale);
@@ -157,137 +156,29 @@ bottles.forEach((b, i) => {
   stage.add(b.mesh);
 });
 
-/* ---------- mist ---------- */
-const COUNT = reduced ? 1800 : small ? 3500 : 8000;
-const pos = new Float32Array(COUNT * 3);
-const vel = new Float32Array(COUNT * 3);
-const life = new Float32Array(COUNT);    // seconds remaining
-const maxLife = new Float32Array(COUNT);
-const col = new Float32Array(COUNT * 3);
-const size = new Float32Array(COUNT);
-const alpha = new Float32Array(COUNT);
-const amul = new Float32Array(COUNT);  // haze is fainter than a fresh spray
-const grow = new Float32Array(COUNT);
-const PALETTE = [
-  [new THREE.Color('#a86bf5'), new THREE.Color('#e2c8ff')],
-  [new THREE.Color('#ff6fbf'), new THREE.Color('#ffc6e4')],
-  [new THREE.Color('#7f95ff'), new THREE.Color('#e8cf95')],
-];
-const HAZE = [new THREE.Color('#b58cf0'), new THREE.Color('#e7c9ff'), new THREE.Color('#e3c28a')];
-
-const geo = new THREE.BufferGeometry();
-geo.setAttribute('position', new THREE.BufferAttribute(pos, 3).setUsage(THREE.DynamicDrawUsage));
-geo.setAttribute('aColor', new THREE.BufferAttribute(col, 3).setUsage(THREE.DynamicDrawUsage));
-geo.setAttribute('aSize', new THREE.BufferAttribute(size, 1).setUsage(THREE.DynamicDrawUsage));
-geo.setAttribute('aAlpha', new THREE.BufferAttribute(alpha, 1).setUsage(THREE.DynamicDrawUsage));
-
-const mistMat = new THREE.ShaderMaterial({
-  // Normal (not additive) blending: dense spray thickens toward the mist colour but can never clip to white,
-  // which it did on phones where hundreds of droplets overlap in a few pixels.
-  transparent: true, depthWrite: false, blending: THREE.NormalBlending, premultipliedAlpha: true,
-  uniforms: { uScale: { value: 1 } },
-  vertexShader: /* glsl */`
-    attribute vec3 aColor; attribute float aSize; attribute float aAlpha;
-    varying vec3 vColor; varying float vAlpha;
-    uniform float uScale;
-    void main() {
-      vColor = aColor; vAlpha = aAlpha;
-      vec4 mv = modelViewMatrix * vec4(position, 1.0);
-      gl_PointSize = aSize * uScale / -mv.z;
-      gl_Position = projectionMatrix * mv;
-    }`,
-  fragmentShader: /* glsl */`
-    varying vec3 vColor; varying float vAlpha;
-    void main() {
-      float d = length(gl_PointCoord - 0.5) * 2.0;
-      float soft = exp(-d * d * 3.2) * (1.0 - smoothstep(0.85, 1.0, d));
-      gl_FragColor = vec4(vColor * soft * vAlpha, soft * vAlpha);
-    }`,
-});
-const mist = new THREE.Points(geo, mistMat);
-mist.frustumCulled = false;
-scene.add(mist);
-
-let cursor = 0;
-const tmp = new THREE.Vector3();
-function spawn(p, v, lifeS, s, c, a = 0.2, gr = 9) {
-  const i = cursor; cursor = (cursor + 1) % COUNT;
-  pos.set([p.x, p.y, p.z], i * 3);
-  vel.set([v.x, v.y, v.z], i * 3);
-  life[i] = maxLife[i] = lifeS;
-  size[i] = s; amul[i] = a; grow[i] = gr;
-  col.set([c.r, c.g, c.b], i * 3);
-}
-
-// Scene bounds at z=0 for haze placement, refreshed on resize.
-const view = { w: 10, h: 6 };
-
-function spawnHaze(n) {
-  for (let k = 0; k < n; k++) {
-    tmp.set((Math.random() - 0.5) * view.w * 1.1, (Math.random() - 0.5) * view.h * 1.1, (Math.random() - 0.5) * 4 - 1);
-    const c = HAZE[(Math.random() * HAZE.length) | 0];
-    spawn(tmp, new THREE.Vector3((Math.random() - 0.5) * 0.1, Math.random() * 0.08, 0), 6 + Math.random() * 8, 18 + Math.random() * 40, c, 0.07, 1.5);
-  }
-}
-
-const sprayQueue = [];
-function spray(b, strength = 1, towards = null) {
-  const origin = b.mesh.localToWorld(b.mesh.userData.nozzle.clone());
-  const dir = towards ? towards.clone().sub(origin).normalize() : b.dir.clone().normalize();
-  sprayQueue.push({ origin, dir, left: Math.round(420 * strength * (COUNT / 8000)), rate: 2400 * (COUNT / 8000), b, t: 0 });
-  b.kick = 1;
-}
-
-function emitSprays(dt) {
-  for (let q = sprayQueue.length - 1; q >= 0; q--) {
-    const s = sprayQueue[q];
-    s.t += dt;
-    const n = Math.min(s.left, Math.ceil(s.rate * dt));
-    const [c1, c2] = PALETTE[s.b.color];
-    for (let k = 0; k < n; k++) {
-      const spread = 0.5 + s.t * 1.2;
-      tmp.copy(s.dir).add(new THREE.Vector3((Math.random() - 0.5) * spread, (Math.random() - 0.5) * spread, (Math.random() - 0.5) * spread)).normalize();
-      const r = Math.random(); const speed = 0.6 + r * r * 4.8;
-      spawn(s.origin, tmp.clone().multiplyScalar(speed), 2.5 + Math.random() * 3.5, 3 + Math.random() * 9,
-        c1.clone().lerp(c2, 0.3 + Math.random() * 0.5), 0.09, 10);
-    }
-    s.left -= n;
-    if (s.left <= 0) sprayQueue.splice(q, 1);
-  }
-}
-
 /* ---------- pointer ---------- */
 const ndc = new THREE.Vector2(0, 0);
-const mouse = new THREE.Vector3(999, 999, 0);
-const mousePrev = new THREE.Vector3();
-const mouseVel = new THREE.Vector3();
 let pointerActive = false;
 const raycaster = new THREE.Raycaster();
-const plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
 let hovered = null;
 
-function toWorld(e) {
+function pick(e) {
   const r = canvas.getBoundingClientRect();
   ndc.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
   raycaster.setFromCamera(ndc, camera);
-  raycaster.ray.intersectPlane(plane, mouse);
+  const hit = raycaster.intersectObjects(stage.children, true)[0];
+  return hit ? hit.object.userData.bottle : null;
 }
 hero.addEventListener('pointermove', (e) => {
-  toWorld(e);
-  if (!pointerActive) { mousePrev.copy(mouse); pointerActive = true; }
-  const hit = raycaster.intersectObjects(stage.children, true)[0];
-  hovered = hit ? hit.object.userData.bottle : null;
-  canvas.style.cursor = hovered ? 'pointer' : 'crosshair';
+  pointerActive = true;
+  hovered = pick(e);
+  canvas.style.cursor = hovered ? 'pointer' : '';
 });
 hero.addEventListener('pointerleave', () => { pointerActive = false; hovered = null; });
+// Clicking a bottle gives it one full turn.
 canvas.addEventListener('click', (e) => {
-  toWorld(e);
-  const hit = raycaster.intersectObjects(stage.children, true)[0];
-  if (hit) { spray(hit.object.userData.bottle, 1.4); return; }
-  // Spray from the nearest bottle toward the click.
-  let best = bottles[0], bd = Infinity;
-  bottles.forEach((b) => { const d = b.mesh.position.distanceTo(mouse); if (d < bd) { bd = d; best = b; } });
-  spray(best, 1.2, mouse);
+  const b = pick(e);
+  if (b) b.twirl = (b.twirl || 0) + Math.PI * 2;
 });
 
 /* ---------- resize ---------- */
@@ -303,31 +194,19 @@ function resize() {
   // On phones the trio sits under the copy.
   stage.position.set(w > 900 ? (rtl ? -2.3 : 2.3) : 0, w > 900 ? 0 : portrait ? -3.6 : -1.6, 0);
   camera.updateProjectionMatrix();
-  view.h = 2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * camera.position.z;
-  view.w = view.h * camera.aspect;
   const bh = 2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * (camera.position.z + 7) * 1.35;
   backdrop.scale.set(bh * camera.aspect, bh, 1);
   backdrop.material.uniforms.uFlip.value = rtl ? 1 : 0;
-  mistMat.uniforms.uScale.value = h * renderer.getPixelRatio() * 0.06;
 }
 new ResizeObserver(resize).observe(hero);
 document.addEventListener('langchange', resize);
 resize();
 
 /* ---------- loop ---------- */
-spawnHaze(Math.floor(COUNT * 0.22));
 const clock = new THREE.Clock();
-let running = true, elapsed = 0, nextAuto = 1.3, autoIdx = 0, intro = reduced || location.search.includes('skipintro') ? 1 : 0;
+let running = true, elapsed = 0, intro = reduced || location.search.includes('skipintro') ? 1 : 0;
 let scrollK = 0;
 addEventListener('scroll', () => { scrollK = Math.min(1, scrollY / (hero.clientHeight || 1)); }, { passive: true });
-
-function flow(x, y, z, t, out) {
-  // Cheap divergence-light swirl built from offset sines; reads like drifting vapour.
-  out.x = Math.sin(y * 0.9 + t * 0.35) * 0.55 + Math.sin(z * 1.3 + t * 0.2) * 0.25;
-  out.y = Math.cos(x * 0.8 - t * 0.3) * 0.4 + 0.06;
-  out.z = Math.sin(x * 0.6 + y * 0.7 + t * 0.25) * 0.3;
-}
-const f = new THREE.Vector3();
 
 function tick() {
   if (!running) return;
@@ -349,64 +228,13 @@ function update(dt) {
     m.position.z = b.home.z;
     const targetRY = Math.sin(elapsed * 0.35 + b.phase) * 0.45 + (pointerActive ? ndc.x * 0.5 : 0) + (b === hovered ? 0.4 : 0);
     b.spin += (targetRY - b.spin) * 0.05;
-    m.rotation.y = b.spin + (1 - delay) * 2.5;
+    b.twirlDone = (b.twirlDone || 0) + ((b.twirl || 0) - (b.twirlDone || 0)) * Math.min(1, dt * 4);
+    m.rotation.y = b.spin + b.twirlDone + (1 - delay) * 2.5;
     m.rotation.z = Math.sin(elapsed * 0.7 + b.phase) * 0.04;
-    b.kick = (b.kick || 0) * 0.9;
-    m.scale.setScalar(b.scale * (1 - b.kick * 0.04));
+    m.scale.setScalar(b.scale);
   });
   stage.rotation.x += ((pointerActive ? -ndc.y * 0.12 : 0) - stage.rotation.x) * 0.05;
 
-  // Automatic spritz, one bottle at a time.
-  if (!reduced && intro > 0.55 && elapsed > nextAuto && scrollK < 0.8) {
-    spray(bottles[autoIdx % 3], autoIdx < 3 ? 1.1 : 0.8);
-    autoIdx++;
-    nextAuto = elapsed + (autoIdx < 3 ? 0.5 : 3.2 + Math.random() * 2.2);
-  }
-  emitSprays(dt);
-  if (Math.random() < 0.35) spawnHaze(1);
-
-  // Pointer velocity in world units.
-  if (pointerActive) {
-    mouseVel.subVectors(mouse, mousePrev).divideScalar(Math.max(dt, 1e-3)).clampLength(0, 22);
-    mousePrev.copy(mouse);
-  } else mouseVel.multiplyScalar(0.9);
-
-  const R = 1.5, R2 = R * R;
-  const drag = Math.pow(0.12, dt); // strong initial drag slows the spray into a cloud
-  for (let i = 0; i < COUNT; i++) {
-    if (life[i] <= 0) { alpha[i] = 0; continue; }
-    life[i] -= dt;
-    const j = i * 3;
-    let x = pos[j], y = pos[j + 1], z = pos[j + 2];
-    flow(x, y, z, elapsed, f);
-    let vx = vel[j] * drag + f.x * dt * 0.9;
-    let vy = vel[j + 1] * drag + f.y * dt * 0.9;
-    let vz = vel[j + 2] * drag + f.z * dt * 0.9;
-    // Brownian jitter lets each spray diffuse instead of drifting as one clump.
-    vx += (Math.random() - 0.5) * dt * 2.4; vy += (Math.random() - 0.5) * dt * 2.4; vz += (Math.random() - 0.5) * dt * 1.2;
-    if (pointerActive) {
-      const dx = x - mouse.x, dy = y - mouse.y, dz = (z - mouse.z) * 0.5;
-      const d2 = dx * dx + dy * dy + dz * dz;
-      if (d2 < R2) {
-        const k = 1 - Math.sqrt(d2) / R;
-        const kk = k * k;
-        // Carry mist along with the cursor, add a swirl and a soft push outward.
-        vx += (mouseVel.x * 0.9 * kk - dy * 2.2 * kk + dx * 1.4 * kk) * dt * 3;
-        vy += (mouseVel.y * 0.9 * kk + dx * 2.2 * kk + dy * 1.4 * kk) * dt * 3;
-        vz += mouseVel.length() * 0.05 * kk * dt * 3;
-      }
-    }
-    vel[j] = vx; vel[j + 1] = vy; vel[j + 2] = vz;
-    pos[j] = x + vx * dt; pos[j + 1] = y + vy * dt; pos[j + 2] = z + vz * dt;
-    size[i] += dt * grow[i]; // vapour expands as it drifts
-    const t = life[i] / maxLife[i];
-    // Fade in fast, thin out as each droplet grows so the cloud stays soft.
-    alpha[i] = Math.min(1, (1 - t) * 10) * Math.pow(t, 1.1) * amul[i] * Math.min(1, 14 / size[i]);
-  }
-  geo.attributes.position.needsUpdate = true;
-  geo.attributes.aAlpha.needsUpdate = true;
-  geo.attributes.aSize.needsUpdate = true;
-  geo.attributes.aColor.needsUpdate = true;
 
   camera.position.y = 0.2 - scrollK * 0.8;
   camera.lookAt(0, -scrollK * 0.4, 0);
@@ -417,8 +245,8 @@ function update(dt) {
 if (location.search.includes('debug')) {
   window.__hero = {
     step: (frames = 60) => { for (let k = 0; k < frames; k++) update(1 / 60); },
-    spray: (i = 0, s = 1) => spray(bottles[i], s),
-    pointer: (x, y) => { ndc.set(x, y); raycaster.setFromCamera(ndc, camera); raycaster.ray.intersectPlane(plane, mouse); if (!pointerActive) mousePrev.copy(mouse); pointerActive = true; },
+    twirl: (i = 0) => { bottles[i].twirl = (bottles[i].twirl || 0) + Math.PI * 2; },
+    pointer: (x, y) => { ndc.set(x, y); pointerActive = true; },
   };
 }
 
