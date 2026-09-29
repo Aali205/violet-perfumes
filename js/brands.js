@@ -1,5 +1,5 @@
 import { BRANDS, I18N } from './data.js';
-import { openViewer } from './main.js?v=6';
+import { openViewer } from './main.js?v=7';
 
 const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const lang = () => (document.documentElement.lang === 'en' ? 'en' : 'ar');

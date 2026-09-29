@@ -20,7 +20,7 @@
 }
 
 *, *::before, *::after { box-sizing: border-box; }
-html { -webkit-text-size-adjust: 100%; overflow-x: clip; }
+html { -webkit-text-size-adjust: 100%; overflow-x: clip; -webkit-tap-highlight-color: transparent; }
 #shop, #visit { scroll-margin-top: 70px; }
 body {
   margin: 0;
@@ -49,6 +49,7 @@ p { margin: 0; }
   transition: transform .35s var(--ease), background .3s, color .3s, border-color .3s;
 }
 .btn:hover { transform: translateY(-2px); background: #fff; }
+.btn:active { transform: scale(.97); }
 .btn-ghost { background: transparent; color: var(--pearl); border-color: rgba(247, 241, 250, .35); }
 .btn-ghost:hover { background: rgba(247, 241, 250, .08); border-color: var(--pearl); }
 .btn-light { background: var(--pearl); }

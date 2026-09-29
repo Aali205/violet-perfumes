@@ -182,7 +182,9 @@ geo.setAttribute('aSize', new THREE.BufferAttribute(size, 1).setUsage(THREE.Dyna
 geo.setAttribute('aAlpha', new THREE.BufferAttribute(alpha, 1).setUsage(THREE.DynamicDrawUsage));
 
 const mistMat = new THREE.ShaderMaterial({
-  transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, premultipliedAlpha: true,
+  // Normal (not additive) blending: dense spray thickens toward the mist colour but can never clip to white,
+  // which it did on phones where hundreds of droplets overlap in a few pixels.
+  transparent: true, depthWrite: false, blending: THREE.NormalBlending, premultipliedAlpha: true,
   uniforms: { uScale: { value: 1 } },
   vertexShader: /* glsl */`
     attribute vec3 aColor; attribute float aSize; attribute float aAlpha;
@@ -208,7 +210,7 @@ scene.add(mist);
 
 let cursor = 0;
 const tmp = new THREE.Vector3();
-function spawn(p, v, lifeS, s, c, a = 0.16, gr = 9) {
+function spawn(p, v, lifeS, s, c, a = 0.2, gr = 9) {
   const i = cursor; cursor = (cursor + 1) % COUNT;
   pos.set([p.x, p.y, p.z], i * 3);
   vel.set([v.x, v.y, v.z], i * 3);
@@ -224,7 +226,7 @@ function spawnHaze(n) {
   for (let k = 0; k < n; k++) {
     tmp.set((Math.random() - 0.5) * view.w * 1.1, (Math.random() - 0.5) * view.h * 1.1, (Math.random() - 0.5) * 4 - 1);
     const c = HAZE[(Math.random() * HAZE.length) | 0];
-    spawn(tmp, new THREE.Vector3((Math.random() - 0.5) * 0.1, Math.random() * 0.08, 0), 6 + Math.random() * 8, 18 + Math.random() * 40, c, 0.05, 1.5);
+    spawn(tmp, new THREE.Vector3((Math.random() - 0.5) * 0.1, Math.random() * 0.08, 0), 6 + Math.random() * 8, 18 + Math.random() * 40, c, 0.07, 1.5);
   }
 }
 
@@ -247,7 +249,7 @@ function emitSprays(dt) {
       tmp.copy(s.dir).add(new THREE.Vector3((Math.random() - 0.5) * spread, (Math.random() - 0.5) * spread, (Math.random() - 0.5) * spread)).normalize();
       const r = Math.random(); const speed = 0.6 + r * r * 4.8;
       spawn(s.origin, tmp.clone().multiplyScalar(speed), 2.5 + Math.random() * 3.5, 3 + Math.random() * 9,
-        c1.clone().lerp(c2, Math.random() * 0.5), 0.05, 10);
+        c1.clone().lerp(c2, 0.3 + Math.random() * 0.5), 0.09, 10);
     }
     s.left -= n;
     if (s.left <= 0) sprayQueue.splice(q, 1);
